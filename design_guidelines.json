@@ -1,0 +1,171 @@
+{
+  "identity": {
+    "name": "ScribeAI",
+    "description": "A minimalist, distraction-free handwritten notes digitizer that transforms physical chaos into digital order.",
+    "tone": "Clarity, Precision, Warmth, Focus",
+    "archetype": "The Soft Utility (Swiss Precision + Organic Warmth)"
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Outfit, sans-serif",
+      "body": "Inter, Mukta, sans-serif",
+      "mono": "JetBrains Mono, monospace",
+      "hindi": "Mukta, sans-serif"
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-semibold tracking-tight leading-tight",
+      "h2": "text-3xl md:text-4xl font-medium tracking-tight",
+      "h3": "text-2xl font-medium tracking-normal",
+      "p": "text-base md:text-lg leading-relaxed text-muted-foreground",
+      "small": "text-sm font-medium tracking-wide uppercase text-muted-foreground"
+    },
+    "imports": [
+      "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@400;500;600&family=Mukta:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    ]
+  },
+  "colors": {
+    "theme": "light",
+    "palette": {
+      "background": "#FAFAFA",
+      "foreground": "#18181B",
+      "card": "#FFFFFF",
+      "card_foreground": "#18181B",
+      "popover": "#FFFFFF",
+      "popover_foreground": "#18181B",
+      "primary": "#2563EB",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#F4F4F5",
+      "secondary_foreground": "#18181B",
+      "muted": "#F4F4F5",
+      "muted_foreground": "#71717A",
+      "accent": "#F4F4F5",
+      "accent_foreground": "#18181B",
+      "destructive": "#EF4444",
+      "destructive_foreground": "#FAFAFA",
+      "border": "#E4E4E7",
+      "input": "#E4E4E7",
+      "ring": "#2563EB"
+    },
+    "dark_palette": {
+      "background": "#09090B",
+      "foreground": "#FAFAFA",
+      "card": "#18181B",
+      "card_foreground": "#FAFAFA",
+      "popover": "#18181B",
+      "popover_foreground": "#FAFAFA",
+      "primary": "#3B82F6",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#27272A",
+      "secondary_foreground": "#FAFAFA",
+      "muted": "#27272A",
+      "muted_foreground": "#A1A1AA",
+      "accent": "#27272A",
+      "accent_foreground": "#FAFAFA",
+      "destructive": "#7F1D1D",
+      "destructive_foreground": "#FAFAFA",
+      "border": "#27272A",
+      "input": "#27272A",
+      "ring": "#3B82F6"
+    },
+    "usage": {
+      "brand": "Use Primary Blue (#2563EB) only for key actions (Upload, Save).",
+      "text": "Never use pure black (#000000). Use Zinc-900 (#18181B) for high contrast text.",
+      "surfaces": "Use off-white (#FAFAFA) for the main background to reduce eye strain, pure white (#FFFFFF) for active cards/sheets."
+    }
+  },
+  "layout_strategy": {
+    "spacing": {
+      "base_unit": "4px",
+      "container_padding": "p-6 md:p-8 lg:p-12",
+      "section_gap": "gap-8 md:gap-12",
+      "item_gap": "gap-4"
+    },
+    "grids": {
+      "library": "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6",
+      "dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6"
+    },
+    "containers": {
+      "main": "max-w-7xl mx-auto w-full",
+      "readable": "max-w-3xl mx-auto"
+    }
+  },
+  "components": {
+    "buttons": {
+      "default": "rounded-lg font-medium transition-all duration-200 active:scale-95",
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
+      "secondary": "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+      "ghost": "hover:bg-accent hover:text-accent-foreground"
+    },
+    "cards": {
+      "style": "bg-card text-card-foreground rounded-xl border border-border/50 shadow-sm hover:shadow-md transition-shadow duration-300",
+      "content_padding": "p-6"
+    },
+    "inputs": {
+      "style": "rounded-lg border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+    },
+    "modals": {
+      "overlay": "bg-background/80 backdrop-blur-sm",
+      "content": "rounded-xl border bg-background shadow-lg sm:rounded-2xl"
+    },
+    "toast": "Use 'sonner' for all notifications. Position: bottom-right."
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-white/70 dark:bg-black/60 border border-white/20",
+    "shadows": {
+      "soft": "shadow-[0_2px_10px_rgba(0,0,0,0.03)]",
+      "medium": "shadow-[0_4px_20px_rgba(0,0,0,0.06)]",
+      "floating": "shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+    },
+    "borders": "1px solid var(--border). Use 'border-dashed' for upload zones.",
+    "gradients": "Avoid strong gradients. Use subtle fades for text-overflow or loading states."
+  },
+  "motion": {
+    "duration": {
+      "fast": "150ms",
+      "normal": "300ms",
+      "slow": "500ms"
+    },
+    "easing": "ease-out",
+    "guidelines": "Use framer-motion for page transitions and list entry (staggered). Micro-interactions on hover (slight lift -translate-y-1)."
+  },
+  "accessibility": {
+    "contrast": "Ensure text contrast ratio >= 4.5:1. Use Zinc-500 for secondary text, Zinc-900 for primary.",
+    "focus": "Visible focus rings on all interactive elements.",
+    "touch": "Minimum touch target 44x44px for mobile."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "style": "Stroke width 1.5px or 2px. Consistent sizing (w-4 h-4, w-5 h-5).",
+    "usage": "Use icons to support text labels, not replace them (except for common actions like Trash/Edit)."
+  },
+  "images": {
+    "strategy": "Use abstract minimal illustrations for empty states. Use user-uploaded content as primary visuals.",
+    "corner_radius": "rounded-lg or rounded-xl"
+  },
+  "pages": {
+    "dashboard": {
+      "structure": "Sidebar (collapsible) + Main Content Area.",
+      "header": "Clean, sticky header with Search and Profile.",
+      "empty_state": "Centered, welcoming message with a clear 'Upload Note' CTA."
+    },
+    "upload": {
+      "zone": "Large drag-and-drop area. Dotted border. Animated icon on hover.",
+      "progress": "Visual progress bar with percentage and current step ('Scanning...', 'Extracting...', 'Finalizing')."
+    },
+    "editor": {
+      "layout": "Split pane. Left: Zoomable Image Canvas. Right: Rich Text Editor.",
+      "toolbar": "Floating or fixed at top of editor pane."
+    }
+  },
+  "universal_guidelines": [
+    "Do not use generic centered layouts everywhere.",
+    "Create depth through layered design elements (z-index).",
+    "Use glass-morphism effects for sticky headers and overlays.",
+    "Do NOT use 'transition: all'. Animate specific properties.",
+    "Do NOT center align the app container (.App { text-align: center }).",
+    "Every interaction needs micro-animations.",
+    "Use 'sonner' for toasts.",
+    "Export components as named exports.",
+    "Export pages as default exports."
+  ]
+}
