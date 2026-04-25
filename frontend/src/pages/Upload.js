@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import { motion } from 'framer-motion';
-import { Upload as UploadIcon, Image as ImageIcon, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
+import { Upload as UploadIcon, Image as ImageIcon, FileText, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Progress } from '../components/ui/progress';
 import { toast } from 'sonner';
@@ -22,9 +22,10 @@ export const Upload = () => {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif']
+      'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif'],
+      'application/pdf': ['.pdf'],
     },
-    multiple: true
+    multiple: true,
   });
 
   const handleUpload = async () => {
@@ -43,12 +44,10 @@ export const Upload = () => {
         
         toast.info(`Uploading ${file.name}...`);
         
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
         const result = await ocrAPI.uploadImage(file, true);
-        
-        uploaded.push({
-          file: file,
-          result: result,
-        });
+
+        uploaded.push({ file, result, isPdf });
         
         setUploadProgress(((i + 1) / files.length) * 100);
       }
@@ -56,11 +55,20 @@ export const Upload = () => {
       setUploadedImages(uploaded);
       toast.success(`Successfully uploaded ${files.length} image(s)`);
       
-      // Navigate to editor with first image
       if (uploaded.length > 0) {
+        const first = uploaded[0];
         setTimeout(() => {
-          navigate(`/editor/${uploaded[0].result.image_id}`, {
-            state: { imagePath: uploaded[0].result.processed_path }
+          navigate(`/editor/${first.result.image_id}`, {
+            state: {
+              imagePath: first.result.processed_path,
+              originalPath: first.result.original_path,
+              ...(first.result.is_pdf && {
+                prefillText: first.result.ocr_text,
+                prefillConfidence: first.result.confidence,
+                prefillEngine: first.result.engine,
+                pageCount: first.result.page_count,
+              }),
+            },
           });
         }, 1000);
       }
@@ -126,10 +134,10 @@ export const Upload = () => {
                   <p className="text-lg font-medium mb-2">
                     {isDragActive
                       ? 'Drop your files here'
-                      : 'Drag and drop images here'}
+                      : 'Drag and drop images or PDFs here'}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    or click to browse • Supports JPG, PNG, WebP
+                    or click to browse • Supports JPG, PNG, WebP, PDF
                   </p>
                 </div>
               </div>
@@ -159,23 +167,33 @@ export const Upload = () => {
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {files.map((file, index) => (
-                  <div
-                    key={index}
-                    className="relative aspect-square rounded-lg border bg-card overflow-hidden group"
-                  >
-                    <img
-                      src={URL.createObjectURL(file)}
-                      alt={file.name}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <p className="text-white text-xs text-center px-2">
-                        {file.name}
-                      </p>
+                {files.map((file, index) => {
+                  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+                  return (
+                    <div
+                      key={index}
+                      className="relative aspect-square rounded-lg border bg-card overflow-hidden group"
+                    >
+                      {isPdf ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-muted/40 px-2">
+                          <FileText className="w-10 h-10 text-primary/60" />
+                          <p className="text-xs text-muted-foreground text-center truncate w-full px-1">
+                            {file.name}
+                          </p>
+                        </div>
+                      ) : (
+                        <img
+                          src={URL.createObjectURL(file)}
+                          alt={file.name}
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <p className="text-white text-xs text-center px-2">{file.name}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Upload Progress */}

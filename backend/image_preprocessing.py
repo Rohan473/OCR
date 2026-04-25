@@ -9,6 +9,40 @@ logger = logging.getLogger(__name__)
 
 class ImagePreprocessor:
     """Advanced image preprocessing for OCR"""
+
+    def preprocess_for_engine(
+        self,
+        pil_image: Image.Image,
+        engine: str = "trocr"
+    ) -> Image.Image:
+        """Apply an OCR-engine-specific preprocessing profile."""
+        try:
+            cv2_image = self.pil_to_cv2(pil_image)
+            normalized_engine = (engine or "trocr").lower()
+
+            cv2_image = self.resize_for_ocr(cv2_image)
+            cv2_image = self.deskew(cv2_image)
+            cv2_image = self.grayscale(cv2_image)
+            cv2_image = self.enhance_contrast(cv2_image)
+
+            if normalized_engine == "tesseract":
+                cv2_image = self.remove_noise(cv2_image)
+                cv2_image = self.adaptive_threshold(cv2_image)
+            else:
+                # TrOCR generally performs better with enhanced grayscale input than hard-binarized text.
+                cv2_image = self.remove_noise(cv2_image)
+
+            if len(cv2_image.shape) == 2:
+                processed_image = Image.fromarray(cv2_image)
+            else:
+                processed_image = self.cv2_to_pil(cv2_image)
+
+            logger.info(f"Image preprocessing completed for engine: {normalized_engine}")
+            return processed_image
+
+        except Exception as e:
+            logger.error(f"Engine-specific preprocessing failed: {str(e)}")
+            return pil_image
     
     @staticmethod
     def pil_to_cv2(pil_image: Image.Image) -> np.ndarray:

@@ -9,24 +9,35 @@ const api = axios.create({
   },
 });
 
+export const getImagePreviewUrl = (imagePath) => {
+  if (!imagePath) {
+    return '';
+  }
+
+  const encodedPath = encodeURIComponent(imagePath);
+  return `${API_BASE_URL}/images?image_path=${encodedPath}`;
+};
+
 // OCR API
 export const ocrAPI = {
   uploadImage: async (file, preprocess = true) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('preprocess', preprocess);
-    
+
     const response = await api.post('/ocr/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000, // 5 min — large PDFs take time
     });
     return response.data;
   },
 
-  processOCR: async (imagePath, engine = 'trocr', language = 'eng+hin') => {
+  processOCR: async (imagePath, engine = 'trocr', language = 'eng', preprocess = true) => {
     const formData = new FormData();
     formData.append('image_path', imagePath);
     formData.append('engine', engine);
     formData.append('language', language);
+    formData.append('preprocess', preprocess);
     
     const response = await api.post('/ocr/process', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -34,7 +45,7 @@ export const ocrAPI = {
     return response.data;
   },
 
-  batchOCR: async (files, engine = 'trocr', language = 'eng+hin', preprocess = true) => {
+  batchOCR: async (files, engine = 'trocr', language = 'eng', preprocess = true) => {
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
     formData.append('engine', engine);
@@ -121,6 +132,23 @@ export const pdfAPI = {
 
   downloadPDF: (filename) => {
     return `${API_BASE_URL}/pdf/download/${filename}`;
+  },
+};
+
+// RAG API
+export const ragAPI = {
+  query: async (question, history = [], folderId = null) => {
+    const response = await api.post('/rag/query', {
+      question,
+      history,
+      folder_id: folderId,
+    });
+    return response.data;
+  },
+
+  reindex: async () => {
+    const response = await api.post('/rag/reindex');
+    return response.data;
   },
 };
 

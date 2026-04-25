@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 from datetime import datetime, timezone
 from PIL import Image
@@ -19,6 +19,8 @@ import shutil
 from ocr_engine import ocr_engine
 from image_preprocessing import image_preprocessor
 from pdf_generator import pdf_generator
+from rag_engine import rag_engine
+from pdf_processor import pdf_processor
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -54,15 +56,18 @@ for directory in [UPLOAD_DIR, PROCESSED_DIR, PDF_DIR]:
 class NoteCreate(BaseModel):
     title: str
     transcribed_text: str
+    original_image_path: str
+    processed_image_path: Optional[str] = None
+    pdf_path: Optional[str] = None
     confidence: float
     engine: str
-    language: str = "eng+hin"
+    language: str = "eng"
     folder_id: Optional[str] = None
     tags: List[str] = []
 
 class Note(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str
     transcribed_text: str
@@ -71,11 +76,17 @@ class Note(BaseModel):
     pdf_path: Optional[str] = None
     confidence: float
     engine: str
-    language: str = "eng+hin"
+    language: str = "eng"
     folder_id: Optional[str] = None
     tags: List[str] = []
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    embedding: Optional[List[float]] = Field(default=None, exclude=True)
+
+class RAGQueryRequest(BaseModel):
+    question: str
+    folder_id: Optional[str] = None
+    history: List[Dict[str, str]] = []
 
 class NoteUpdate(BaseModel):
     title: Optional[str] = None
@@ -98,7 +109,7 @@ class FolderCreate(BaseModel):
 class OCRRequest(BaseModel):
     image_id: str
     engine: str = "trocr"
-    language: str = "eng+hin"
+    language: str = "eng"
     preprocess: bool = True
 
 class SearchRequest(BaseModel):
@@ -106,16 +117,18 @@ class SearchRequest(BaseModel):
     folder_id: Optional[str] = None
 
 # ============ Helper Functions ============
-
 def save_image_from_upload(upload_file: UploadFile, directory: Path) -> str:
     """Save uploaded image to disk"""
     file_id = str(uuid.uuid4())
-    file_extension = Path(upload_file.filename).suffix
+
+    original_filename = upload_file.filename or "upload.png"
+    file_extension = Path(original_filename).suffix or ".png"
+
     file_path = directory / f"{file_id}{file_extension}"
-    
+
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(upload_file.file, buffer)
-    
+
     return str(file_path)
 
 def image_to_base64(image_path: str) -> str:
@@ -127,6 +140,39 @@ def image_to_base64(image_path: str) -> str:
     except Exception as e:
         logger.error(f"Failed to encode image: {str(e)}")
         return ""
+
+def resolve_storage_path(image_path: str) -> Path:
+    """Resolve a stored image path to a safe local path inside backend storage directories."""
+    candidate = Path(image_path)
+    if not candidate.is_absolute():
+        candidate = ROOT_DIR / candidate
+
+    candidate = candidate.resolve()
+    allowed_roots = [UPLOAD_DIR.resolve(), PROCESSED_DIR.resolve(), PDF_DIR.resolve()]
+
+    if not any(str(candidate).startswith(str(root)) for root in allowed_roots):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return candidate
+
+
+def normalize_ocr_languages(languages: Optional[str]) -> str:
+    """Normalize OCR language input and default to English when omitted."""
+    tokens = [token.strip() for token in (languages or "").split("+") if token.strip()]
+    if not tokens:
+        return "eng"
+
+    normalized_tokens = []
+    seen = set()
+    for token in tokens:
+        if token not in seen:
+            normalized_tokens.append(token)
+            seen.add(token)
+
+    return "+".join(normalized_tokens)
 
 # ============ API Routes ============
 
@@ -148,51 +194,160 @@ async def root():
 @api_router.post("/ocr/upload")
 async def upload_image(
     file: UploadFile = File(...),
-    preprocess: bool = Form(True)
+    preprocess: bool = Form(True),
+    engine: str = Form("tesseract"),
+    language: str = Form("eng"),
 ):
-    """Upload and optionally preprocess an image"""
+    """Upload and optionally preprocess an image or PDF"""
     try:
-        # Validate file type
-        if not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="File must be an image")
-        
-        # Save original image
+        content_type = file.content_type or ""
+        is_pdf = content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")
+
+        if not is_pdf and not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="File must be an image or PDF")
+
         original_path = save_image_from_upload(file, UPLOAD_DIR)
-        logger.info(f"Image uploaded: {original_path}")
-        
-        # Preprocess if requested
+        logger.info(f"File uploaded: {original_path}")
+
+        MAX_PDF_PAGES = 15
+
+        if is_pdf:
+            # Rename to .pdf so pypdfium2 handles it correctly
+            pdf_path = str(Path(original_path).with_suffix(".pdf"))
+            Path(original_path).rename(pdf_path)
+            original_path = pdf_path
+
+            total_pages = pdf_processor.page_count(original_path)
+            normalized_language = normalize_ocr_languages(language)
+
+            # Try extracting the embedded text layer first — instant and perfect for
+            # PDFs that already have selectable text (e.g. digitally-created or pre-OCR'd)
+            try:
+                layer_text, has_layer = pdf_processor.extract_text_layer(
+                    original_path, max_pages=MAX_PDF_PAGES
+                )
+            except Exception as e:
+                logger.warning(f"Text layer extraction failed, falling back to OCR: {e}")
+                layer_text, has_layer = "", False
+
+            if has_layer:
+                # Render only the first page for the preview image
+                try:
+                    preview_images = pdf_processor.pdf_to_images(original_path, max_pages=1)
+                    preview_path = str(PROCESSED_DIR / f"{Path(original_path).stem}_page1.png")
+                    preview_images[0].save(preview_path)
+                except Exception:
+                    preview_path = original_path
+
+                logger.info(f"PDF text layer extracted: {len(layer_text.split())} words")
+                return {
+                    "success": True,
+                    "image_id": Path(original_path).stem,
+                    "original_path": original_path,
+                    "processed_path": preview_path,
+                    "preprocessed": False,
+                    "is_pdf": True,
+                    "page_count": total_pages,
+                    "ocr_text": layer_text,
+                    "confidence": 1.0,
+                    "engine": "pdf_text_layer",
+                    "language": normalized_language,
+                }
+
+            # No embedded text — fall back to OCR on rendered images
+            try:
+                page_images = pdf_processor.pdf_to_images(original_path, max_pages=MAX_PDF_PAGES)
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=f"Could not read PDF: {e}")
+
+            if not page_images:
+                raise HTTPException(status_code=422, detail="PDF has no renderable pages")
+
+            preview_path = str(PROCESSED_DIR / f"{Path(original_path).stem}_page1.png")
+            page_images[0].save(preview_path)
+
+            # Use Gemini batch (one API call for all pages) when the key is available —
+            # dramatically better than Tesseract/TrOCR for handwritten content.
+            gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            effective_engine = engine
+            if gemini_key and engine.lower() != "tesseract" and engine.lower() != "trocr":
+                effective_engine = "gemini"
+
+            if effective_engine.lower() == "gemini":
+                batch_text, confidence = ocr_engine.extract_with_gemini_batch(page_images)
+                if batch_text:
+                    return {
+                        "success": True,
+                        "image_id": Path(original_path).stem,
+                        "original_path": original_path,
+                        "processed_path": preview_path,
+                        "preprocessed": False,
+                        "is_pdf": True,
+                        "page_count": total_pages,
+                        "ocr_text": batch_text,
+                        "confidence": round(confidence, 3),
+                        "engine": "gemini",
+                        "language": normalized_language,
+                    }
+                logger.warning("Gemini batch OCR returned empty — falling back to Tesseract")
+                effective_engine = "tesseract"
+
+            ocr_text, confidence = pdf_processor.ocr_images(
+                page_images,
+                ocr_fn=ocr_engine.extract_text,
+                engine=effective_engine,
+                languages=normalized_language,
+                preprocessor=image_preprocessor if preprocess else None,
+            )
+
+            return {
+                "success": True,
+                "image_id": Path(original_path).stem,
+                "original_path": original_path,
+                "processed_path": preview_path,
+                "preprocessed": preprocess,
+                "is_pdf": True,
+                "page_count": total_pages,
+                "ocr_text": ocr_text,
+                "confidence": round(confidence, 3),
+                "engine": effective_engine,
+                "language": normalized_language,
+            }
+
+        # --- image path (unchanged) ---
         processed_path = None
         if preprocess:
             try:
                 image = Image.open(original_path)
-                processed_image = image_preprocessor.preprocess(image, full_pipeline=True)
-                
-                # Save processed image
+                processed_image = image_preprocessor.preprocess_for_engine(image, engine="trocr")
                 processed_path = str(PROCESSED_DIR / f"{Path(original_path).stem}_processed.png")
                 processed_image.save(processed_path)
                 logger.info(f"Image preprocessed: {processed_path}")
-                
             except Exception as e:
                 logger.error(f"Preprocessing failed: {str(e)}")
                 processed_path = original_path
-        
+
         return {
             "success": True,
             "image_id": Path(original_path).stem,
             "original_path": original_path,
             "processed_path": processed_path or original_path,
-            "preprocessed": preprocess and processed_path is not None
+            "preprocessed": preprocess and processed_path is not None,
+            "is_pdf": False,
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Upload failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Upload failed: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 @api_router.post("/ocr/process")
 async def process_ocr(
     image_path: str = Form(...),
     engine: str = Form("trocr"),
-    language: str = Form("eng+hin")
+    language: str = Form("eng"),
+    preprocess: bool = Form(True)
 ):
     """Process image with OCR"""
     try:
@@ -201,14 +356,20 @@ async def process_ocr(
             raise HTTPException(status_code=404, detail="Image not found")
         
         image = Image.open(image_path)
+        normalized_language = normalize_ocr_languages(language)
+
+        if preprocess:
+            image = image_preprocessor.preprocess_for_engine(image, engine=engine)
         
         # Perform OCR
-        result = ocr_engine.extract_text(image, engine=engine, languages=language)
+        result = ocr_engine.extract_text(image, engine=engine, languages=normalized_language)
         
         if not result["success"]:
+            error_message = result.get("error", "OCR processing failed")
+            status_code = 503 if "not available" in error_message.lower() else 500
             raise HTTPException(
-                status_code=500, 
-                detail=result.get("error", "OCR processing failed")
+                status_code=status_code,
+                detail=error_message
             )
         
         return {
@@ -217,7 +378,7 @@ async def process_ocr(
             "engine": result["engine"],
             "confidence": result["confidence"],
             "processing_time": result["processing_time"],
-            "language": language
+            "language": normalized_language
         }
         
     except HTTPException:
@@ -226,15 +387,22 @@ async def process_ocr(
         logger.error(f"OCR processing failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.get("/images")
+async def get_image(image_path: str):
+    """Serve uploaded or processed images to the frontend."""
+    file_path = resolve_storage_path(image_path)
+    return FileResponse(file_path)
+
 @api_router.post("/ocr/batch")
 async def batch_ocr(
     files: List[UploadFile] = File(...),
     engine: str = Form("trocr"),
-    language: str = Form("eng+hin"),
+    language: str = Form("eng"),
     preprocess: bool = Form(True)
 ):
     """Process multiple images in batch"""
     results = []
+    normalized_language = normalize_ocr_languages(language)
     
     for file in files:
         try:
@@ -246,7 +414,7 @@ async def batch_ocr(
                 image = image_preprocessor.preprocess(image, full_pipeline=True)
             
             # Process OCR
-            ocr_result = ocr_engine.extract_text(image, engine=engine, languages=language)
+            ocr_result = ocr_engine.extract_text(image, engine=engine, languages=normalized_language)
             
             results.append({
                 "filename": file.filename,
@@ -271,17 +439,24 @@ async def batch_ocr(
 async def create_note(note_data: NoteCreate):
     """Create a new note"""
     try:
-        note = Note(**note_data.model_dump())
-        
-        # Convert to dict and serialize datetime
+        note_payload = note_data.model_dump()
+        note_payload["language"] = normalize_ocr_languages(note_payload.get("language"))
+        note = Note(**note_payload)
+
         doc = note.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
         doc['updated_at'] = doc['updated_at'].isoformat()
-        
+
+        try:
+            doc['embedding'] = await rag_engine.embed_text(note.transcribed_text)
+        except Exception as e:
+            logger.warning(f"Embedding generation skipped: {e}")
+            doc['embedding'] = None
+
         await db.notes.insert_one(doc)
-        
+
         return note
-        
+
     except Exception as e:
         logger.error(f"Failed to create note: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -339,9 +514,14 @@ async def update_note(note_id: str, update_data: NoteUpdate):
         if not existing:
             raise HTTPException(status_code=404, detail="Note not found")
         
-        # Prepare update
         update_dict = {k: v for k, v in update_data.model_dump().items() if v is not None}
         update_dict['updated_at'] = datetime.now(timezone.utc).isoformat()
+
+        if 'transcribed_text' in update_dict:
+            try:
+                update_dict['embedding'] = await rag_engine.embed_text(update_dict['transcribed_text'])
+            except Exception as e:
+                logger.warning(f"Embedding regeneration skipped: {e}")
         
         # Update in database
         await db.notes.update_one(
@@ -351,6 +531,8 @@ async def update_note(note_id: str, update_data: NoteUpdate):
         
         # Get updated note
         updated = await db.notes.find_one({"id": note_id}, {"_id": 0})
+        if not updated:
+            raise HTTPException(status_code=404, detail="Note not found after update")
         
         # Convert ISO strings back to datetime
         if isinstance(updated['created_at'], str):
@@ -447,7 +629,7 @@ async def delete_folder(folder_id: str):
 async def search_notes(search_data: SearchRequest):
     """Search notes by text content"""
     try:
-        query = {
+        query: Dict[str, Any] = {
             "$or": [
                 {"title": {"$regex": search_data.query, "$options": "i"}},
                 {"transcribed_text": {"$regex": search_data.query, "$options": "i"}},
@@ -471,6 +653,49 @@ async def search_notes(search_data: SearchRequest):
         
     except Exception as e:
         logger.error(f"Search failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============ RAG Routes ============
+
+@api_router.post("/rag/query")
+async def rag_query(req: RAGQueryRequest):
+    """Ask a natural language question about your notes"""
+    try:
+        result = await rag_engine.query(
+            question=req.question,
+            db=db,
+            folder_id=req.folder_id,
+            history=req.history,
+        )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"RAG query failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/rag/reindex")
+async def rag_reindex():
+    """Generate embeddings for all notes that are missing them"""
+    try:
+        notes = await db.notes.find(
+            {"$or": [{"embedding": {"$exists": False}}, {"embedding": None}]},
+            {"_id": 0, "id": 1, "transcribed_text": 1}
+        ).to_list(10000)
+
+        embedded = 0
+        for note in notes:
+            try:
+                emb = await rag_engine.embed_text(note.get("transcribed_text", ""))
+                if emb:
+                    await db.notes.update_one({"id": note["id"]}, {"$set": {"embedding": emb}})
+                    embedded += 1
+            except Exception as e:
+                logger.warning(f"Failed to embed note {note['id']}: {e}")
+
+        return {"embedded": embedded, "skipped": len(notes) - embedded}
+    except Exception as e:
+        logger.error(f"Reindex failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============ PDF Routes ============

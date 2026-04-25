@@ -8,38 +8,90 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Progress } from '../components/ui/progress';
 import { toast } from 'sonner';
-import { ocrAPI, notesAPI, pdfAPI } from '../api/client';
+import { getImagePreviewUrl, ocrAPI, notesAPI, pdfAPI } from '../api/client';
+
+const normalizeOCRText = (value) => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.join('\n');
+  }
+
+  if (value == null) {
+    return '';
+  }
+
+  return String(value);
+};
+
+const OCR_LANGUAGE_OPTIONS = [
+  { value: 'eng', label: 'English' },
+  { value: 'hin', label: 'Hindi' },
+  { value: 'eng+hin', label: 'Mixed' },
+];
 
 export const Editor = () => {
   const { imageId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const existingNote = location.state?.note || null;
   
-  const [imagePath, setImagePath] = useState(location.state?.imagePath || '');
+  const [imagePath] = useState(
+    existingNote?.processed_image_path || location.state?.imagePath || existingNote?.original_image_path || ''
+  );
+  const [originalImagePath] = useState(
+    existingNote?.original_image_path || location.state?.originalPath || location.state?.imagePath || ''
+  );
   const [processing, setProcessing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [ocrResult, setOcrResult] = useState(null);
-  const [title, setTitle] = useState('');
-  const [transcribedText, setTranscribedText] = useState('');
-  const [engine, setEngine] = useState('trocr');
+  const prefillText = location.state?.prefillText || null;
+  const pageCount = location.state?.pageCount || null;
+
+  const [ocrResult, setOcrResult] = useState(
+    existingNote
+      ? { confidence: existingNote.confidence, engine: existingNote.engine }
+      : prefillText
+      ? { confidence: location.state?.prefillConfidence ?? 0, engine: location.state?.prefillEngine ?? 'tesseract' }
+      : null
+  );
+  const [title, setTitle] = useState(existingNote?.title || '');
+  const [transcribedText, setTranscribedText] = useState(
+    normalizeOCRText(existingNote?.transcribed_text || prefillText)
+  );
+  const [engine, setEngine] = useState(existingNote?.engine?.toLowerCase() || location.state?.prefillEngine || 'trocr');
+  const [language, setLanguage] = useState(existingNote?.language || location.state?.language || 'eng');
+  const previewUrl = getImagePreviewUrl(imagePath || originalImagePath);
 
   useEffect(() => {
-    if (imagePath) {
+    if (imagePath && !existingNote && !prefillText) {
       processOCR();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imagePath]);
 
-  const processOCR = async () => {
+  const processOCR = async (selectedEngine = engine, selectedLanguage = language) => {
     setProcessing(true);
     
     try {
       toast.info('Processing image with OCR...');
       
-      const result = await ocrAPI.processOCR(imagePath, engine, 'eng+hin');
+      const sourceImagePath = originalImagePath || imagePath;
+
+      if (!sourceImagePath) {
+        toast.error('No image available for OCR');
+        return;
+      }
+
+      const result = await ocrAPI.processOCR(sourceImagePath, selectedEngine, selectedLanguage, true);
+      const normalizedText = normalizeOCRText(result.text);
       
       setOcrResult(result);
-      setTranscribedText(result.text);
-      setTitle(`Note ${new Date().toLocaleDateString()}`);
+      setTranscribedText(normalizedText);
+      if (!existingNote && !title.trim()) {
+        setTitle(`Note ${new Date().toLocaleDateString()}`);
+      }
       
       toast.success(
         `OCR completed with ${(result.confidence * 100).toFixed(1)}% confidence`,
@@ -50,6 +102,28 @@ export const Editor = () => {
       toast.error('OCR processing failed: ' + (error.response?.data?.detail || error.message));
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handleEngineChange = async (nextEngine) => {
+    if (nextEngine === engine) {
+      return;
+    }
+
+    setEngine(nextEngine);
+    if (originalImagePath || imagePath) {
+      await processOCR(nextEngine, language);
+    }
+  };
+
+  const handleLanguageChange = async (nextLanguage) => {
+    if (nextLanguage === language) {
+      return;
+    }
+
+    setLanguage(nextLanguage);
+    if (originalImagePath || imagePath) {
+      await processOCR(engine, nextLanguage);
     }
   };
 
@@ -64,11 +138,12 @@ export const Editor = () => {
     try {
       const noteData = {
         title: title.trim(),
-        transcribed_text: transcribedText,
-        original_image_path: imagePath,
+        transcribed_text: normalizeOCRText(transcribedText),
+        original_image_path: originalImagePath || imagePath,
+        processed_image_path: imagePath || null,
         confidence: ocrResult?.confidence || 0,
         engine: ocrResult?.engine || engine,
-        language: 'eng+hin',
+        language,
         tags: [],
       };
       
@@ -169,17 +244,23 @@ export const Editor = () => {
             {/* Left Pane - Image Preview */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <Label className="text-base font-medium">Original Image</Label>
+                <div className="flex items-center gap-2">
+                  <Label className="text-base font-medium">
+                    {pageCount ? `PDF Preview (page 1 of ${pageCount})` : 'Original Image'}
+                  </Label>
+                </div>
                 {ocrResult && (
                   <div className="text-sm text-muted-foreground">
-                    Confidence: {(ocrResult.confidence * 100).toFixed(1)}%
+                    {ocrResult.engine?.toLowerCase() === 'pdf_text_layer'
+                      ? 'Text layer extracted (100%)'
+                      : `Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`}
                   </div>
                 )}
               </div>
               <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-                {imagePath ? (
+                {previewUrl ? (
                   <img
-                    src={`file://${imagePath}`}
+                    src={previewUrl}
                     alt="Uploaded note"
                     className="w-full h-auto"
                     onError={(e) => {
@@ -195,26 +276,48 @@ export const Editor = () => {
               </div>
               
               {/* Engine Toggle */}
-              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
-                <Label className="text-sm">OCR Engine:</Label>
+              <div className="flex flex-wrap items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <div className="flex flex-wrap items-center gap-4">
+                  <Label className="text-sm">OCR Engine:</Label>
+                  <Button
+                    size="sm"
+                    variant={engine === 'gemini' ? 'default' : 'outline'}
+                    onClick={() => handleEngineChange('gemini')}
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Gemini (Best)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={engine === 'trocr' ? 'default' : 'outline'}
+                    onClick={() => handleEngineChange('trocr')}
+                  >
+                    TrOCR (Handwriting)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={engine === 'tesseract' ? 'default' : 'outline'}
+                    onClick={() => handleEngineChange('tesseract')}
+                  >
+                    Tesseract (Printed)
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label className="text-sm">Language:</Label>
+                  {OCR_LANGUAGE_OPTIONS.map((option) => (
+                    <Button
+                      key={option.value}
+                      size="sm"
+                      variant={language === option.value ? 'default' : 'outline'}
+                      onClick={() => handleLanguageChange(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
                 <Button
                   size="sm"
-                  variant={engine === 'trocr' ? 'default' : 'outline'}
-                  onClick={() => setEngine('trocr')}
-                >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  TrOCR
-                </Button>
-                <Button
-                  size="sm"
-                  variant={engine === 'tesseract' ? 'default' : 'outline'}
-                  onClick={() => setEngine('tesseract')}
-                >
-                  Tesseract
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={processOCR}
+                  onClick={() => processOCR()}
                   disabled={processing}
                 >
                   Re-process
@@ -224,6 +327,12 @@ export const Editor = () => {
 
             {/* Right Pane - Text Editor */}
             <div className="space-y-4">
+              {!imagePath && !transcribedText && (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  No OCR source was provided for this editor view. Open the note from Upload or Library, or re-upload the image.
+                </div>
+              )}
+
               <div>
                 <Label htmlFor="title" className="text-base font-medium">Title</Label>
                 <Input

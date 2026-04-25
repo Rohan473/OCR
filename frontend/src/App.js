@@ -10,6 +10,7 @@ import Upload from './pages/Upload';
 import Editor from './pages/Editor';
 import Library from './pages/Library';
 import NoteDetail from './pages/NoteDetail';
+import { RagSidebar } from './components/RagSidebar';
 
 const queryClient = new QueryClient();
 
@@ -26,6 +27,7 @@ function App() {
             <Route path="/note/:noteId" element={<NoteDetail />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          <RagSidebar />
           <Toaster position="bottom-right" />
         </div>
       </Router>
