@@ -209,5 +209,9 @@ function formatDuration(ms) {
     return `${seconds}s`;
   }
 }
-
+"voice_engine": {
+    "available": bool(os.environ.get("GROQ_API_KEY")),
+    "whisper_model": "whisper-large-v3-turbo",
+    "max_audio_size_mb": 25,
+},
 module.exports = setupHealthEndpoints;

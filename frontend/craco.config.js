@@ -12,14 +12,10 @@ const config = {
   enableVisualEdits: isDevServer, // Only enable during dev server
 };
 
-// Conditionally load visual edits modules only in dev mode
+// Visual edits plugins are not present — skip loading them
 let setupDevServer;
 let babelMetadataPlugin;
-
-if (config.enableVisualEdits) {
-  setupDevServer = require("./plugins/visual-edits/dev-server-setup");
-  babelMetadataPlugin = require("./plugins/visual-edits/babel-metadata-plugin");
-}
+// config.enableVisualEdits intentionally disabled: plugins/visual-edits/ not found
 
 // Conditionally load health check modules only if enabled
 let WebpackHealthPlugin;

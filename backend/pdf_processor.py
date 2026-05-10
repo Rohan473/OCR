@@ -2,9 +2,13 @@ import logging
 from pathlib import Path
 from typing import List, Tuple
 from PIL import Image
-import pypdfium2 as pdfium
 
 logger = logging.getLogger(__name__)
+
+# pypdfium2 deferred — importing it at module level adds startup latency on Windows.
+def _pdfium():
+    import pypdfium2
+    return pypdfium2
 
 RENDER_SCALE = 2.5  # 2.5x = ~180 DPI — good quality without memory spike
 
@@ -13,7 +17,7 @@ class PDFProcessor:
     def extract_text_layer(self, pdf_path: str, max_pages: int = 0) -> Tuple[str, bool]:
         """Extract the embedded text layer from a PDF without rendering.
         Returns (text, has_meaningful_text). Falls back gracefully if no layer exists."""
-        doc = pdfium.PdfDocument(pdf_path)
+        doc = _pdfium().PdfDocument(pdf_path)
         page_texts = []
         try:
             total = len(doc)
@@ -38,7 +42,7 @@ class PDFProcessor:
         return combined, has_meaningful_text
 
     def page_count(self, pdf_path: str) -> int:
-        doc = pdfium.PdfDocument(pdf_path)
+        doc = _pdfium().PdfDocument(pdf_path)
         try:
             return len(doc)
         finally:
@@ -46,7 +50,7 @@ class PDFProcessor:
 
     def pdf_to_images(self, pdf_path: str, max_pages: int = 0) -> List[Image.Image]:
         """Render PDF pages as PIL Images, optionally capped at max_pages."""
-        doc = pdfium.PdfDocument(pdf_path)
+        doc = _pdfium().PdfDocument(pdf_path)
         images = []
         try:
             total = len(doc)

@@ -1,13 +1,8 @@
 """PDF generation with searchable text layer"""
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image
 import io
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +23,15 @@ class PDFGenerator:
         image: Image.Image,
         text: str,
         output_path: str,
-        page_size: Tuple = A4
+        page_size: Tuple = None,
     ) -> bool:
         """Create PDF with image and invisible searchable text layer"""
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+        if page_size is None:
+            page_size = A4
         try:
-            # Create canvas
             c = canvas.Canvas(output_path, pagesize=page_size)
             page_width, page_height = page_size
             
@@ -101,13 +100,72 @@ class PDFGenerator:
             logger.error(f"PDF generation failed: {str(e)}")
             return False
     
+    def create_multipage_searchable_pdf(
+        self,
+        pages: List[Tuple[Image.Image, str]],
+        output_path: str,
+    ) -> bool:
+        """Create a multi-page searchable PDF: one PDF page per (image, text) pair."""
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+        try:
+            c = canvas.Canvas(output_path, pagesize=A4)
+            pw, ph = A4
+            margin = 40
+            aw = pw - 2 * margin
+            ah = ph - 2 * margin
+
+            for i, (image, page_text) in enumerate(pages):
+                if i > 0:
+                    c.showPage()
+
+                iw, ih = image.size
+                ar = iw / ih
+                if ar > aw / ah:
+                    sw, sh = aw, aw / ar
+                else:
+                    sh, sw = ah, ah * ar
+
+                x = (pw - sw) / 2
+                y = (ph - sh) / 2
+
+                buf = io.BytesIO()
+                image.save(buf, format='PNG')
+                buf.seek(0)
+                c.drawImage(ImageReader(buf), x, y, width=sw, height=sh)
+
+                # Invisible searchable text layer
+                c.setFillColorRGB(1, 1, 1, alpha=0)
+                to = c.beginText(x, y + sh - 20)
+                to.setFont("Helvetica", 10)
+                for line in page_text.split('\n'):
+                    if line.strip():
+                        to.textLine(line.strip())
+                c.drawText(to)
+
+            c.setTitle("OCR Processed Document")
+            c.setAuthor("ScribeAI")
+            c.setSubject("Handwritten Notes Digitized")
+            c.save()
+            logger.info(f"Multi-page PDF created ({len(pages)} pages): {output_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Multi-page PDF generation failed: {e}")
+            return False
+
     def create_simple_pdf(
         self,
         image: Image.Image,
         output_path: str,
-        page_size: Tuple = A4
+        page_size: Tuple = None,
     ) -> bool:
         """Create simple PDF with just the image"""
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+        if page_size is None:
+            page_size = A4
         try:
             c = canvas.Canvas(output_path, pagesize=page_size)
             page_width, page_height = page_size

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Save, Download, Loader2, FileText, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, Download, Loader2, FileText, Sparkles, Eye, Pencil } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
 import { Input } from '../components/ui/input';
@@ -9,6 +9,8 @@ import { Label } from '../components/ui/label';
 import { Progress } from '../components/ui/progress';
 import { toast } from 'sonner';
 import { getImagePreviewUrl, ocrAPI, notesAPI, pdfAPI } from '../api/client';
+import { MarkdownView } from '../components/MarkdownView';
+import { PdfPageList } from '../components/PdfPageList';
 
 const normalizeOCRText = (value) => {
   if (typeof value === 'string') {
@@ -48,6 +50,7 @@ export const Editor = () => {
   const [saving, setSaving] = useState(false);
   const prefillText = location.state?.prefillText || null;
   const pageCount = location.state?.pageCount || null;
+  const folderId = location.state?.folder_id || null;
 
   const [ocrResult, setOcrResult] = useState(
     existingNote
@@ -56,12 +59,13 @@ export const Editor = () => {
       ? { confidence: location.state?.prefillConfidence ?? 0, engine: location.state?.prefillEngine ?? 'tesseract' }
       : null
   );
-  const [title, setTitle] = useState(existingNote?.title || '');
+  const [title, setTitle] = useState(existingNote?.title || location.state?.prefillTitle || '');
   const [transcribedText, setTranscribedText] = useState(
     normalizeOCRText(existingNote?.transcribed_text || prefillText)
   );
-  const [engine, setEngine] = useState(existingNote?.engine?.toLowerCase() || location.state?.prefillEngine || 'trocr');
+  const [engine, setEngine] = useState(existingNote?.engine?.toLowerCase() || location.state?.prefillEngine || 'mistral');
   const [language, setLanguage] = useState(existingNote?.language || location.state?.language || 'eng');
+  const [viewMode, setViewMode] = useState('preview');
   const previewUrl = getImagePreviewUrl(imagePath || originalImagePath);
 
   useEffect(() => {
@@ -144,6 +148,7 @@ export const Editor = () => {
         confidence: ocrResult?.confidence || 0,
         engine: ocrResult?.engine || engine,
         language,
+        folder_id: folderId,
         tags: [],
       };
       
@@ -188,18 +193,19 @@ export const Editor = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
+      {/* Glassmorphism header */}
+      <header className="sticky top-0 z-50 w-full border-b backdrop-blur-xl bg-background/80">
         <div className="container flex h-16 items-center justify-between">
           <Button
             variant="ghost"
+            size="sm"
             onClick={() => navigate('/upload')}
             data-testid="back-to-upload-btn"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back
           </Button>
-          <h1 className="text-xl font-semibold">Edit Transcription</h1>
+          <h1 className="text-lg font-semibold">Edit Transcription</h1>
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -257,22 +263,11 @@ export const Editor = () => {
                   </div>
                 )}
               </div>
-              <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-                {previewUrl ? (
-                  <img
-                    src={previewUrl}
-                    alt="Uploaded note"
-                    className="w-full h-auto"
-                    onError={(e) => {
-                      e.target.onerror = null;
-                      e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2Y0ZjRmNSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxOCIgZmlsbD0iIzk5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkltYWdlIFByZXZpZXc8L3RleHQ+PC9zdmc+';
-                    }}
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-96 bg-muted">
-                    <FileText className="w-16 h-16 text-muted-foreground" />
-                  </div>
-                )}
+              <div className="rounded-xl border bg-card overflow-hidden shadow-sm max-h-[80vh] overflow-y-auto">
+                <PdfPageList
+                  sourcePath={originalImagePath || imagePath}
+                  fallbackPath={imagePath}
+                />
               </div>
               
               {/* Engine Toggle */}
@@ -281,11 +276,18 @@ export const Editor = () => {
                   <Label className="text-sm">OCR Engine:</Label>
                   <Button
                     size="sm"
+                    variant={engine === 'mistral' ? 'default' : 'outline'}
+                    onClick={() => handleEngineChange('mistral')}
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Mistral (Best)
+                  </Button>
+                  <Button
+                    size="sm"
                     variant={engine === 'gemini' ? 'default' : 'outline'}
                     onClick={() => handleEngineChange('gemini')}
                   >
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Gemini (Best)
+                    Gemini
                   </Button>
                   <Button
                     size="sm"
@@ -346,17 +348,58 @@ export const Editor = () => {
               </div>
 
               <div className="flex-1">
-                <Label htmlFor="transcription" className="text-base font-medium">
-                  Transcribed Text
-                </Label>
-                <Textarea
-                  id="transcription"
-                  value={transcribedText}
-                  onChange={(e) => setTranscribedText(e.target.value)}
-                  placeholder="Transcribed text will appear here..."
-                  className="mt-2 min-h-[500px] font-mono text-sm leading-relaxed"
-                  data-testid="transcription-textarea"
-                />
+                <div className="flex items-center justify-between mt-2 mb-2">
+                  <Label htmlFor="transcription" className="text-base font-medium">
+                    Transcribed Text
+                  </Label>
+                  <div className="inline-flex rounded-lg border bg-muted/40 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('edit')}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                        viewMode === 'edit' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      data-testid="view-mode-edit"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('preview')}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                        viewMode === 'preview' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      data-testid="view-mode-preview"
+                    >
+                      <Eye className="w-3 h-3" />
+                      Preview
+                    </button>
+                  </div>
+                </div>
+                {viewMode === 'edit' ? (
+                  <Textarea
+                    id="transcription"
+                    value={transcribedText}
+                    onChange={(e) => setTranscribedText(e.target.value)}
+                    placeholder="Transcribed text will appear here..."
+                    className="min-h-[500px] font-mono text-sm leading-relaxed"
+                    data-testid="transcription-textarea"
+                  />
+                ) : (
+                  <div
+                    className="min-h-[500px] rounded-md border bg-background px-4 py-3 overflow-auto"
+                    data-testid="transcription-preview"
+                  >
+                    {transcribedText ? (
+                      <MarkdownView>{transcribedText}</MarkdownView>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">
+                        Transcribed text will appear here…
+                      </p>
+                    )}
+                  </div>
+                )}
                 <p className="mt-2 text-sm text-muted-foreground">
                   {transcribedText.length} characters • {transcribedText.split(/\s+/).filter(Boolean).length} words
                 </p>

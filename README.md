@@ -1,101 +1,223 @@
-# ScribeAI — Handwritten Notes Digitizer
+# ScribeAI
 
-AI-powered document digitization with React + FastAPI. Upload handwritten notes or PDFs and get accurate, editable transcriptions.
+AI-powered OCR backend that converts handwritten notes and scanned documents into searchable, editable text — with RAG-based Q&A over your notes.
 
-## Features
-
-- **Gemini Vision OCR** — Google's multimodal model; best accuracy for handwriting, diagrams, and mixed scripts. Batch-processes entire PDFs in a single API call.
-- **TrOCR** — Microsoft's transformer OCR for handwritten text, with automatic line segmentation (OpenCV) before inference.
-- **Tesseract** — Fast OCR for printed documents with adaptive PSM selection.
-- **PDF text layer extraction** — If a PDF already has selectable text, it's extracted directly (instant, lossless — no OCR needed).
-- **RAG Q&A** — Ask natural-language questions across all saved notes using semantic search (Groq embeddings).
-- **Image preprocessing** — Auto-deskew, CLAHE contrast enhancement, noise removal, adaptive thresholding.
-- **Searchable PDFs** — Export notes as PDFs with an invisible OCR text layer.
-- **MongoDB storage** — Notes, folders, tags, and full-text search.
-- **Multi-language** — English, Hindi (Devanagari), and mixed scripts.
-
-## Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19, Shadcn/UI, Tailwind CSS, Framer Motion |
-| Backend | FastAPI, Python 3.11 |
-| OCR | Gemini 2.0 Flash, TrOCR (Microsoft), Tesseract |
-| Database | MongoDB |
-| Embeddings | Groq (for RAG) |
-| PDF | pypdfium2, ReportLab |
-
-## Prerequisites
-
-- Python 3.11+
-- Node.js 18+ and Yarn
-- MongoDB running locally (`mongod`)
-- Tesseract OCR — [download](https://github.com/UB-Mannheim/tesseract/wiki) and install to `C:\Program Files\Tesseract-OCR\`
-- A free [Gemini API key](https://aistudio.google.com/apikey) (for best OCR quality)
-- A free [Groq API key](https://console.groq.com) (for RAG Q&A)
-
-## Setup
-
-### Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-Create `backend/.env`:
-
-```env
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=scribeai
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-
-# Required for Gemini OCR (best quality)
-GEMINI_API_KEY=your_gemini_key_here
-
-# Required for RAG Q&A
-GROQ_API_KEY=your_groq_key_here
-```
-
-```bash
-uvicorn server:app --host 0.0.0.0 --port 8001 --reload
-```
-
-### Frontend
-
-```bash
-cd frontend
-yarn install
-yarn start
-```
-
-Open **http://localhost:3000**
-
-## How It Works
-
-1. **Upload** an image or PDF (up to 15 pages for PDFs).
-2. The backend checks for an embedded text layer first — if found, it's returned instantly.
-3. Otherwise, if a `GEMINI_API_KEY` is set, all pages are sent to Gemini Vision in one batch call.
-4. The result lands in the **Editor** where you can correct, retitle, and save the note.
-5. Re-process any note with a different engine (Gemini / TrOCR / Tesseract) or language directly from the Editor.
-6. Use the **RAG sidebar** to ask questions across all saved notes.
-
-## OCR Engine Comparison
-
-| Engine | Best For | Notes |
-|--------|----------|-------|
-| Gemini (Best) | Handwriting, diagrams, mixed content | Requires API key; free tier: 1500 req/day |
-| TrOCR | Handwritten English | Runs locally; slower on CPU |
-| Tesseract | Printed / typed text | Fastest; good for clean scans |
+---
 
 ## Architecture
 
+```mermaid
+graph TD
+    Client["Frontend (React)"] -->|REST| API["FastAPI (server.py)"]
+    API --> OCR["OCR Engine"]
+    OCR -->|handwritten| TrOCR["TrOCR\n(microsoft/trocr-base-handwritten)"]
+    OCR -->|printed text| Tesseract["Tesseract OCR"]
+    OCR -->|fallback / low confidence| Gemini["Gemini Vision\n(gemini-2.0-flash)"]
+    API --> PDF["PDF Processor\n(pypdfium2 + reportlab)"]
+    API --> RAG["RAG Engine\n(Groq LLM + sentence-transformers)"]
+    API --> DB[(MongoDB)]
+    RAG --> DB
 ```
-frontend (React :3000)
-    └── backend (FastAPI :8001)
-            ├── ocr_engine.py       — Gemini / TrOCR / Tesseract
-            ├── pdf_processor.py    — PDF rendering & text layer extraction
-            ├── image_preprocessing.py — OpenCV pipeline
-            ├── rag_engine.py       — Groq embeddings + semantic search
-            └── pdf_generator.py    — Searchable PDF export
+
+**Engine fallback chain:** TrOCR → Tesseract → Gemini (triggered when confidence < 60 %)  
+**PDF handling:** text-layer extraction first; falls back to image OCR only when no selectable text exists.
+
+---
+
+## Features
+
+- **Multi-engine OCR** — TrOCR for handwriting, Tesseract for printed text, Gemini Vision as a high-quality fallback
+- **PDF processing** — extracts embedded text layers (instant, lossless) or renders pages for OCR
+- **Batch PDF OCR** — sends all pages to Gemini in a single API call to reduce latency
+- **Searchable PDF export** — saves original image with an invisible text layer for copy-paste
+- **Folder & note management** — full CRUD with MongoDB storage
+- **RAG Q&A** — ask natural language questions over your notes (Groq LLM + local embeddings)
+- **Semantic re-indexing** — `/api/rag/reindex` generates embeddings for all existing notes
+- **Image preprocessing** — contrast enhancement, denoising, binarisation for better OCR accuracy
+- **Line segmentation** — splits full-page images into single-line crops before feeding TrOCR
+
+---
+
+## Prerequisites
+
+| Dependency | Version | Notes |
+|---|---|---|
+| Python | 3.10 + | Tested on 3.12 |
+| MongoDB | 6 + | Local or Atlas |
+| Tesseract | 5 + | Add to `PATH` or set `TESSERACT_CMD` |
+| CUDA (optional) | 11.8 + | For GPU-accelerated TrOCR |
+
+---
+
+## Setup
+
+```bash
+# 1. Clone and enter backend
+git clone <repo-url>
+cd ScribeAI/backend
+
+# 2. Create and activate a virtual environment
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Configure environment
+cp .env.example .env
+# Edit .env with your API keys and MongoDB URL
+
+# 5. Start the server
+uvicorn server:app --reload --port 8001
 ```
+
+The API will be available at `http://localhost:8001`.  
+Interactive docs: `http://localhost:8001/docs`
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `MONGO_URL` | Yes | MongoDB connection string |
+| `DB_NAME` | Yes | Database name (e.g. `scribeai`) |
+| `GROQ_API_KEY` | Yes | For RAG Q&A (free at [console.groq.com](https://console.groq.com)) |
+| `GEMINI_API_KEY` | No | Enables Gemini OCR engine (free at [aistudio.google.com](https://aistudio.google.com)) |
+| `CORS_ORIGINS` | No | Comma-separated allowed origins (default: `*`) |
+| `TESSERACT_CMD` | No | Full path to `tesseract` executable if not on `PATH` |
+
+---
+
+## API Reference
+
+### OCR
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/ocr/upload` | Upload image or PDF; returns OCR text and file paths |
+| `POST` | `/api/ocr/process` | Run OCR on an already-uploaded file path |
+| `POST` | `/api/ocr/batch` | Upload and OCR multiple images at once |
+| `GET` | `/api/images?image_path=<path>` | Serve a stored image to the frontend |
+
+**Upload form fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `file` | File | — | Image (JPEG, PNG, GIF, WebP, BMP, TIFF) or PDF |
+| `engine` | string | `auto` | `auto`, `trocr`, `tesseract`, or `gemini` |
+| `language` | string | `eng` | Tesseract language code(s), e.g. `eng+hin` |
+| `preprocess` | bool | `true` | Apply image enhancement before OCR |
+
+Size limits: **20 MB** for images, **50 MB** for PDFs.
+
+**Sample response:**
+```json
+{
+  "success": true,
+  "image_id": "d8790153-a9ab-4104-a334-490379d0d0ce",
+  "original_path": "uploads/d8790153...png",
+  "processed_path": "processed/d8790153..._processed.png",
+  "is_pdf": false
+}
+```
+
+### Notes
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/notes` | Create a note (stores text + embedding) |
+| `GET` | `/api/notes` | List all notes; filter by `?folder_id=<id>` |
+| `GET` | `/api/notes/{id}` | Get a single note |
+| `PATCH` | `/api/notes/{id}` | Update title, text, folder, or tags |
+| `DELETE` | `/api/notes/{id}` | Delete a note |
+
+### Folders
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/folders` | Create a folder |
+| `GET` | `/api/folders` | List all folders |
+| `DELETE` | `/api/folders/{id}` | Delete folder (un-files its notes) |
+
+### RAG Q&A
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/rag/query` | Ask a question about your notes |
+| `POST` | `/api/rag/reindex` | Generate/refresh embeddings for all notes |
+
+**Query body:**
+```json
+{
+  "question": "What did I write about recursion?",
+  "folder_id": null,
+  "history": []
+}
+```
+
+### PDF
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/pdf/generate` | Create a searchable PDF from image + text |
+| `GET` | `/api/pdf/download/{filename}` | Download a generated PDF |
+
+### Utility
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/health` | MongoDB status + OCR engine availability |
+| `GET` | `/api/` | API version info |
+
+---
+
+## OCR Engines
+
+| Engine | Best for | Notes |
+|---|---|---|
+| **TrOCR** | Handwritten text | Runs locally; uses line-segmentation + hallucination detection |
+| **Tesseract** | Printed / typed text | Tries PSM 3, 6, 4 and picks the highest-confidence result |
+| **Gemini Vision** | Complex layouts, mixed content | Requires `GEMINI_API_KEY`; used as fallback when confidence < 60 % |
+
+---
+
+## Running Tests
+
+```bash
+# From the repo root
+pip install pytest
+pytest backend/tests/ -v
+```
+
+Requires MongoDB running locally. Tests use the `scribeai_test` database (overriding `DB_NAME`).
+
+---
+
+## Known Limitations
+
+- **CORS is wide open** (`*`) — tighten `CORS_ORIGINS` before deploying publicly
+- **RAG similarity search** fetches up to 500 notes and computes cosine similarity in Python — not suitable for large corpora; consider Atlas Vector Search for scale
+- **TrOCR** is CPU-only by default; a CUDA-enabled GPU will give ~10× speedup
+- **Hindi PDF export** font support is a stub — replace the `try/pass` in `pdf_generator.py` with a Noto Devanagari font if needed
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| API framework | FastAPI + Uvicorn |
+| Database | MongoDB (Motor async driver) |
+| OCR — handwriting | Microsoft TrOCR (Transformers) |
+| OCR — printed | Tesseract 5 via pytesseract |
+| OCR — vision LLM | Google Gemini 2.0 Flash |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
+| LLM for RAG | Groq (`llama-3.1-8b-instant`) |
+| PDF read | pypdfium2 |
+| PDF write | ReportLab |
+| Image processing | Pillow + OpenCV |
+| Validation | Pydantic v2 |
